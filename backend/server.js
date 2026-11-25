@@ -67,12 +67,13 @@ app.use(helmet({
   frameguard: false
 }));
 
-// Allow chatbot widget to be embedded in iframes on any third-party website
+// Allow chatbot widget to be embedded in iframes on any third-party website, local file, or webview
 app.use((req, res, next) => {
   if (req.path.startsWith('/widget')) {
     res.removeHeader('X-Frame-Options');
     res.removeHeader('x-frame-options');
-    res.setHeader('Content-Security-Policy', "frame-ancestors *");
+    res.removeHeader('Content-Security-Policy');
+    res.removeHeader('content-security-policy');
   }
   next();
 });
