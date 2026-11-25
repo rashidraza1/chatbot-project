@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 const pdfParse = require('pdf-parse');
 const OpenAI = require('openai');
 const { PdfChunk } = require('../models');
@@ -31,7 +32,13 @@ const chunkText = (text, maxLength = 1000) => {
 // Process PDF file and store chunks/embeddings
 exports.processPdf = async (pdfDoc) => {
   try {
-    const dataBuffer = fs.readFileSync(pdfDoc.file_path);
+    let resolvedPath = pdfDoc.file_path;
+    if (!fs.existsSync(resolvedPath)) {
+      const filename = path.basename((pdfDoc.file_path || '').replace(/\\/g, '/'));
+      const fallback = path.join(__dirname, '..', 'uploads', filename);
+      if (fs.existsSync(fallback)) resolvedPath = fallback;
+    }
+    const dataBuffer = fs.readFileSync(resolvedPath);
     const data = await pdfParse(dataBuffer);
     const text = data.text;
 

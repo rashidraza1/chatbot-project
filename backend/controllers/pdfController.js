@@ -65,8 +65,14 @@ exports.deletePdf = async (req, res) => {
     await PdfChunk.destroy({ where: { pdf_id: id } });
 
     // Remove physical file
-    if (fs.existsSync(pdf.file_path)) {
-       fs.unlinkSync(pdf.file_path);
+    let resolvedPath = pdf.file_path;
+    if (!fs.existsSync(resolvedPath)) {
+      const filename = path.basename((pdf.file_path || '').replace(/\\/g, '/'));
+      const fallback = path.join(__dirname, '..', 'uploads', filename);
+      if (fs.existsSync(fallback)) resolvedPath = fallback;
+    }
+    if (fs.existsSync(resolvedPath)) {
+       fs.unlinkSync(resolvedPath);
     }
 
     // Delete db record

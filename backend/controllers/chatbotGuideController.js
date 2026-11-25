@@ -131,7 +131,16 @@ exports.downloadDocument = async (req, res) => {
       return res.status(403).json({ error: 'Document download is disabled' });
     }
 
-    if (!fs.existsSync(document.file_path)) {
+    let resolvedPath = document.file_path;
+    if (!fs.existsSync(resolvedPath)) {
+      const filename = path.basename((document.file_path || '').replace(/\\/g, '/'));
+      const fallbackPath = path.join(__dirname, '..', 'uploads', filename);
+      if (fs.existsSync(fallbackPath)) {
+        resolvedPath = fallbackPath;
+      }
+    }
+
+    if (!fs.existsSync(resolvedPath)) {
       return res.status(404).json({ error: 'Physical document file missing on server' });
     }
 
@@ -139,7 +148,7 @@ exports.downloadDocument = async (req, res) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(document.file_name)}"`);
 
-    const fileStream = fs.createReadStream(document.file_path);
+    const fileStream = fs.createReadStream(resolvedPath);
     fileStream.pipe(res);
   } catch (error) {
     console.error('Error downloading document:', error);

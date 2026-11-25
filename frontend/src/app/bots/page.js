@@ -38,7 +38,8 @@ export default function BotsPage() {
   };
 
   const getEmbedCode = (id) => {
-    return `<script>\n  (function(){\n    var s=document.createElement("script");\n    s.src="http://localhost:5000/widget.js";\n    s.setAttribute("data-bot-id","${id}");\n    document.head.appendChild(s);\n  })();\n</script>`;
+    const apiBase = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:10000').replace(/\/$/, '');
+    return `<script>\n  (function(){\n    var s=document.createElement("script");\n    s.src="${apiBase}/widget.js";\n    s.setAttribute("data-bot-id","${id}");\n    document.head.appendChild(s);\n  })();\n</script>`;
   };
 
   const copyToClipboard = () => {

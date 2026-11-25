@@ -1,5 +1,6 @@
 (function () {
-  var botId = document.currentScript.getAttribute('data-bot-id');
+  var scriptTag = document.currentScript;
+  var botId = scriptTag ? scriptTag.getAttribute('data-bot-id') : null;
   if (!botId) {
     console.error('ChatWidget: Missing data-bot-id attribute on script tag.');
     return;
@@ -21,13 +22,27 @@
   container.style.overflow = 'hidden';
   container.style.transition = 'all 0.3s ease-in-out';
 
+  // Determine frontend base URL
+  var customFrontendUrl = scriptTag ? scriptTag.getAttribute('data-frontend-url') : null;
+  var isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  var frontendBase = customFrontendUrl || (window.CHATDESK_FRONTEND_URL || (isLocal ? 'http://localhost:3000' : ''));
+
+  if (!frontendBase && scriptTag && scriptTag.src) {
+    try {
+      var scriptUrl = new URL(scriptTag.src);
+      frontendBase = scriptUrl.origin;
+    } catch (e) {}
+  }
+
+  if (!frontendBase) {
+    frontendBase = isLocal ? 'http://localhost:3000' : window.location.origin;
+  }
+  frontendBase = frontendBase.replace(/\/$/, '');
+
   // Create iframe
   var iframe = document.createElement('iframe');
-  //alert('https://a1ef-2401-4900-c27e-67-849e-4b0c-1880-b1fc.ngrok-free.app/widget/' + botId + '?url=' + currentUrl)
-  // Pass the current page URL to the iframe so the bot knows where the visitor is
   var currentUrl = encodeURIComponent(window.location.href);
-  //iframe.src = 'http://localhost:3000/widget/' + botId + '?url=' + currentUrl;
-  iframe.src = 'https://207c-2401-4900-e00b-1494-4d49-4b37-5132-cab1.ngrok-free.app/widget/' + botId + '?url=' + currentUrl;
+  iframe.src = frontendBase + '/widget/' + botId + '?url=' + currentUrl;
   iframe.style.width = '100%';
   iframe.style.height = '100%';
   iframe.style.border = 'none';
@@ -38,10 +53,17 @@
   container.appendChild(iframe);
   document.body.appendChild(container);
 
+  // Allowed origins for postMessage
+  var allowedOrigin = '';
+  try {
+    allowedOrigin = new URL(frontendBase).origin;
+  } catch (e) {
+    allowedOrigin = frontendBase;
+  }
+
   // Listen for messages from iframe to resize container
   window.addEventListener('message', function (event) {
-    //if (event.origin !== 'http://localhost:3000') return;
-    if (event.origin !== 'https://207c-2401-4900-e00b-1494-4d49-4b37-5132-cab1.ngrok-free.app') return;
+    if (event.origin !== allowedOrigin && event.origin !== 'http://localhost:3000') return;
 
     if (event.data === 'chatdesk-minimize') {
       container.style.width = '80px';

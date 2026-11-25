@@ -6,8 +6,7 @@ import { Bot, User, Send, X, AlertCircle, Smile, Mic, MicOff, Maximize2, Minimiz
 import ReactMarkdown from 'react-markdown';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:10000';
-console(API_BASE)
-alert(API_BASE);
+
 export default function WidgetPage() {
   const params = useParams();
   const bot_id = params?.bot_id;
