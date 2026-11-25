@@ -18,16 +18,26 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 // Next.js Unified Integration (Architecture B: Single Combined Node App)
-const frontendDir = path.join(__dirname, '..', 'frontend');
+const candidateFrontendDirs = [
+  path.join(__dirname, 'frontend'),
+  path.join(__dirname, '..', 'frontend')
+];
+const frontendDir = candidateFrontendDirs.find(d => fs.existsSync(path.join(d, '.next'))) || path.join(__dirname, 'frontend');
+
 let nextApp = null;
 let nextHandle = null;
 
 if (process.env.SERVE_FRONTEND === 'true' || fs.existsSync(path.join(frontendDir, '.next'))) {
   try {
-    const next = require('../frontend/node_modules/next');
+    let next;
+    try {
+      next = require('next');
+    } catch (e) {
+      next = require(path.join(frontendDir, 'node_modules', 'next'));
+    }
     nextApp = next({ dev: false, dir: frontendDir });
     nextHandle = nextApp.getRequestHandler();
-    console.log('Next.js frontend integration detected and initialized');
+    console.log('Next.js frontend integration detected and initialized for:', frontendDir);
   } catch (err) {
     console.log('Next.js integration skipped (standalone backend mode):', err.message);
   }
@@ -107,7 +117,7 @@ app.use('/api/chatbot', publicCors, require('./routes/chatbotGuideRoutes'));
 
 // Delegate all other routes to Next.js (if integrated)
 if (nextHandle) {
-  app.all('*', (req, res, next) => {
+  app.use((req, res, next) => {
     if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io/')) {
       return next();
     }

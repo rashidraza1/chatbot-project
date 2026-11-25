@@ -1,4 +1,9 @@
-const bcrypt = require('bcrypt');
+let bcrypt;
+try {
+  bcrypt = require('bcrypt');
+} catch (e) {
+  bcrypt = require('bcryptjs');
+}
 const jwt = require('jsonwebtoken');
 const Joi = require('joi');
 const { User } = require('../models');
