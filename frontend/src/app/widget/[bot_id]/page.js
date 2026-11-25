@@ -5,7 +5,8 @@ import { io } from 'socket.io-client';
 import { Bot, User, Send, X, AlertCircle, Smile, Mic, MicOff, Maximize2, Minimize2, Minus, History, MessageSquare, Plus, Menu, Search, Trash2, Phone, Download, ArrowLeft, FileText, ChevronRight, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:10000';
+const rawApiBase = process.env.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL.trim() : '';
+const API_BASE = rawApiBase ? rawApiBase.replace(/\/$/, '') : '';
 
 export default function WidgetPage() {
   const params = useParams();
