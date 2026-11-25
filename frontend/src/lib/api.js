@@ -1,12 +1,9 @@
 import axios from 'axios';
 import Cookies from 'js-cookie';
 
-const rawApiBase = process.env.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL.trim() : '';
-const API_URL = rawApiBase ? `${rawApiBase.replace(/\/$/, '')}/api` : '/api';
-
-console.log(API_URL)
+// Use same-origin relative '/api' path in browser, with fallback for SSR
 const api = axios.create({
-  baseURL: API_URL,
+  baseURL: '/api',
 });
 
 api.interceptors.request.use((config) => {
