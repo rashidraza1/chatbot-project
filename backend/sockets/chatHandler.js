@@ -19,6 +19,18 @@ module.exports = (io, socket) => {
         }
       }
 
+      if (!botId) {
+        console.warn('join_conversation skipped: botId is required when no valid conversationId is provided');
+        return;
+      }
+
+      // Fetch the bot with FAQs
+      const bot = await Bot.findByPk(botId);
+      if (!bot) {
+        console.warn(`join_conversation: Bot with id ${botId} not found`);
+        return;
+      }
+
       // If no conversation exists, create a new visitor and conversation
       const visitor = await Visitor.create({
         name: visitorData?.name || 'Anonymous',
@@ -31,9 +43,6 @@ module.exports = (io, socket) => {
         visitor_id: visitor.id,
         status: 'active'
       });
-
-      // Fetch the bot with FAQs
-      const bot = await Bot.findByPk(botId);
 
       socket.join(`conversation_${conversation.id}`);
       socket.emit('conversation_joined', { conversation, bot });

@@ -1,5 +1,5 @@
 (function () {
-  var scriptTag = document.currentScript;
+  var scriptTag = document.currentScript || document.querySelector('script[data-bot-id]') || document.querySelector('script[src*="widget.js"]');
   var botId = scriptTag ? scriptTag.getAttribute('data-bot-id') : null;
   if (!botId) {
     console.error('ChatWidget: Missing data-bot-id attribute on script tag.');

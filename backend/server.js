@@ -26,6 +26,8 @@ const frontendDir = candidateFrontendDirs.find(d => fs.existsSync(path.join(d, '
 
 let nextApp = null;
 let nextHandle = null;
+let nextReady = false;
+let nextPromise = null;
 
 if (process.env.SERVE_FRONTEND === 'true' || fs.existsSync(path.join(frontendDir, '.next'))) {
   try {
@@ -37,7 +39,12 @@ if (process.env.SERVE_FRONTEND === 'true' || fs.existsSync(path.join(frontendDir
     }
     nextApp = next({ dev: false, dir: frontendDir });
     nextHandle = nextApp.getRequestHandler();
-    console.log('Next.js frontend integration detected and initialized for:', frontendDir);
+    nextPromise = nextApp.prepare().then(() => {
+      nextReady = true;
+      console.log('Next.js frontend prepared successfully for:', frontendDir);
+    }).catch(err => {
+      console.error('Failed to prepare Next.js frontend:', err);
+    });
   } catch (err) {
     console.log('Next.js integration skipped (standalone backend mode):', err.message);
   }
@@ -46,14 +53,29 @@ if (process.env.SERVE_FRONTEND === 'true' || fs.existsSync(path.join(frontendDir
 const app = express();
 const server = http.createServer(app);
 
+// Trust proxy for LiteSpeed reverse proxy
+app.set('trust proxy', 1);
+
 // Serve static widget files
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Security and Middleware
 app.use(helmet({
   contentSecurityPolicy: false,
-  crossOriginResourcePolicy: { policy: "cross-origin" }
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginOpenerPolicy: false,
+  frameguard: false
 }));
+
+// Allow chatbot widget to be embedded in iframes on any third-party website
+app.use((req, res, next) => {
+  if (req.path.startsWith('/widget')) {
+    res.removeHeader('X-Frame-Options');
+    res.removeHeader('x-frame-options');
+    res.setHeader('Content-Security-Policy', "frame-ancestors *");
+  }
+  next();
+});
 
 // CORS Configuration
 const allowedAdminOrigins = [
@@ -106,9 +128,14 @@ app.get('/health', (req, res) => res.status(200).json({ status: 'OK' }));
 
 // Protected Management API Routes
 app.use('/api/auth', adminCors, require('./routes/authRoutes'));
-app.use('/api/bots', adminCors, require('./routes/botRoutes'));
+app.use('/api/bots', (req, res, next) => {
+  if (req.path.endsWith('/widget')) {
+    return publicCors(req, res, next);
+  }
+  return adminCors(req, res, next);
+}, require('./routes/botRoutes'));
 app.use('/api/conversations', adminCors, require('./routes/conversationRoutes'));
-app.use('/api/chat', adminCors, require('./routes/chatRoutes'));
+app.use('/api/chat', publicCors, require('./routes/chatRoutes'));
 app.use('/api/pdfs', adminCors, require('./routes/pdfRoutes'));
 app.use('/api/admin', adminCors, require('./routes/adminGuideRoutes'));
 
@@ -117,11 +144,19 @@ app.use('/api/chatbot', publicCors, require('./routes/chatbotGuideRoutes'));
 
 // Delegate all other routes to Next.js (if integrated)
 if (nextHandle) {
-  app.use((req, res, next) => {
+  app.use(async (req, res, next) => {
     if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io/')) {
       return next();
     }
-    return nextHandle(req, res);
+    try {
+      if (!nextReady && nextPromise) {
+        await nextPromise;
+      }
+      return nextHandle(req, res);
+    } catch (err) {
+      console.error('Error handling Next.js request:', err);
+      return next(err);
+    }
   });
 }
 
@@ -139,11 +174,8 @@ const startServer = () => {
   });
 };
 
-if (nextApp) {
-  nextApp.prepare().then(startServer).catch(err => {
-    console.error('Failed to prepare Next.js, starting standalone backend:', err);
-    startServer();
-  });
+if (nextPromise) {
+  nextPromise.then(startServer);
 } else {
   startServer();
 }
