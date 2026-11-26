@@ -12,15 +12,17 @@
   container.style.position = 'fixed';
   container.style.bottom = '20px';
   container.style.right = '20px';
-  container.style.width = '380px';
-  container.style.height = '600px';
-  container.style.maxWidth = '90vw';
-  container.style.maxHeight = '90vh';
+  container.style.width = '84px';
+  container.style.height = '84px';
+  container.style.maxWidth = '100vw';
+  container.style.maxHeight = '100vh';
   container.style.zIndex = '999999';
   container.style.pointerEvents = 'none'; // so it doesn't block clicks when closed
   container.style.border = 'none';
-  container.style.overflow = 'hidden';
-  container.style.transition = 'all 0.3s ease-in-out';
+  container.style.background = 'transparent';
+  container.style.backgroundColor = 'transparent';
+  container.style.overflow = 'visible';
+  container.style.transition = 'width 0.25s ease, height 0.25s ease';
 
   // Determine frontend base URL
   var customFrontendUrl = scriptTag ? scriptTag.getAttribute('data-frontend-url') : null;
@@ -47,7 +49,10 @@
   iframe.style.height = '100%';
   iframe.style.border = 'none';
   iframe.style.pointerEvents = 'auto'; // allow clicks inside iframe
+  iframe.style.background = 'transparent';
   iframe.style.backgroundColor = 'transparent';
+  iframe.style.colorScheme = 'normal';
+  iframe.setAttribute('allowtransparency', 'true');
   iframe.allow = 'camera; microphone; fullscreen; display-capture; picture-in-picture';
 
   container.appendChild(iframe);
@@ -66,26 +71,32 @@
     if (event.origin !== allowedOrigin && event.origin !== 'http://localhost:3000') return;
 
     if (event.data === 'chatdesk-minimize') {
-      container.style.width = '80px';
-      container.style.height = '80px';
+      container.style.width = '84px';
+      container.style.height = '84px';
       container.style.bottom = '20px';
       container.style.right = '20px';
+      container.style.maxWidth = '100vw';
+      container.style.maxHeight = '100vh';
     } else if (event.data === 'chatdesk-expand') {
-      container.style.width = '380px';
-      container.style.height = '600px';
+      container.style.width = '400px';
+      container.style.height = '620px';
       container.style.bottom = '20px';
       container.style.right = '20px';
+      container.style.maxWidth = '92vw';
+      container.style.maxHeight = '88vh';
     } else if (event.data === 'chatdesk-maximize') {
       container.style.width = '95vw';
       container.style.height = '95vh';
       container.style.bottom = '2.5vh';
       container.style.right = '2.5vw';
+      container.style.maxWidth = '95vw';
+      container.style.maxHeight = '95vh';
     } else if (event.data === 'chatdesk-cancel') {
       container.style.display = 'none';
     }
   });
 
   // Start minimized
-  container.style.width = '80px';
-  container.style.height = '80px';
+  container.style.width = '84px';
+  container.style.height = '84px';
 })();

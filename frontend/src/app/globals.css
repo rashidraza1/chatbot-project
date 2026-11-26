@@ -25,6 +25,15 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Transparent Widget Iframe Mode */
+html.widget-mode,
+body.widget-mode,
+html:has([data-widget-page="true"]),
+body:has([data-widget-page="true"]) {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
 /* Force hide the Next.js development indicator "N" icon */
 nextjs-portal, #nextjs-portal {
   display: none !important;

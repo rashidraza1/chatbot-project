@@ -35,6 +35,7 @@ module.exports = (io, socket) => {
       const visitor = await Visitor.create({
         name: visitorData?.name || 'Anonymous',
         email: visitorData?.email || null,
+        phone: visitorData?.phone || visitorData?.mobile || null,
         last_page_url: visitorData?.url || null
       });
 

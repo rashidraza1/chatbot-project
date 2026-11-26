@@ -165,8 +165,17 @@ if (nextHandle) {
 const PORT = process.env.PORT || 10000;
 
 const startServer = () => {
-  sequelize.sync().then(() => {
+  sequelize.sync().then(async () => {
     console.log('Database connected and synced');
+    try {
+      const [cols] = await sequelize.query("SHOW COLUMNS FROM visitors LIKE 'phone'");
+      if (cols.length === 0) {
+        await sequelize.query("ALTER TABLE visitors ADD COLUMN phone VARCHAR(255) NULL AFTER email");
+        console.log('Added missing phone column to visitors table');
+      }
+    } catch (e) {
+      console.log('Notice checking phone column:', e.message);
+    }
     server.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });

@@ -7,6 +7,24 @@ import ReactMarkdown from 'react-markdown';
 
 const API_BASE = typeof window !== 'undefined' ? '' : (process.env.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL.trim().replace(/\/$/, '') : '');
 
+function adjustColor(col, amt) {
+  if (!col) return '#4338ca';
+  let usePound = false;
+  if (col[0] === '#') {
+    col = col.slice(1);
+    usePound = true;
+  }
+  let num = parseInt(col, 16);
+  if (isNaN(num)) return '#4338ca';
+  let r = (num >> 16) + amt;
+  let b = ((num >> 8) & 0x00ff) + amt;
+  let g = (num & 0x0000ff) + amt;
+  r = Math.min(255, Math.max(0, r));
+  b = Math.min(255, Math.max(0, b));
+  g = Math.min(255, Math.max(0, g));
+  return (usePound ? '#' : '') + (g | (b << 8) | (r << 16)).toString(16).padStart(6, '0');
+}
+
 export default function WidgetPage() {
   const params = useParams();
   const bot_id = params?.bot_id;
@@ -29,12 +47,13 @@ export default function WidgetPage() {
   const [searchTerm, setSearchTerm] = useState('');
 
   // Lead capture state
-  const [visitorInfo, setVisitorInfo] = useState({ name: '', email: '' });
+  const [visitorInfo, setVisitorInfo] = useState({ name: '', email: '', phone: '' });
   const [showLeadForm, setShowLeadForm] = useState(false);
   const [pendingMessage, setPendingMessage] = useState('');
   const [pendingCategory, setPendingCategory] = useState(null);
   const [leadName, setLeadName] = useState('');
   const [leadEmail, setLeadEmail] = useState('');
+  const [leadMobile, setLeadMobile] = useState('');
   const [leadErrors, setLeadErrors] = useState({});
   const [isSubmittingLead, setIsSubmittingLead] = useState(false);
 
@@ -58,8 +77,19 @@ export default function WidgetPage() {
   const recognitionRef = useRef(null);
   const nameInputRef = useRef(null);
   const emailInputRef = useRef(null);
+  const mobileInputRef = useRef(null);
 
   const emojis = ['😊', '😂', '😍', '👍', '🙏', '🔥', '👋', '🤔', '🙌', '🎉', '💡', '✨'];
+
+  // Ensure transparent background for embedded widget iframe
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.add('widget-mode');
+      document.body.classList.add('widget-mode');
+      document.documentElement.style.backgroundColor = 'transparent';
+      document.body.style.backgroundColor = 'transparent';
+    }
+  }, []);
 
   // Initialize Guest ID and visitor session from localStorage
   useEffect(() => {
@@ -72,25 +102,24 @@ export default function WidgetPage() {
 
     const storedName = localStorage.getItem('chatdesk_visitor_name') || '';
     const storedEmail = localStorage.getItem('chatdesk_visitor_email') || '';
+    const storedMobile = localStorage.getItem('chatdesk_visitor_mobile') || '';
     if (storedName && storedEmail) {
-      setVisitorInfo({ name: storedName, email: storedEmail });
+      setVisitorInfo({ name: storedName, email: storedEmail, phone: storedMobile });
       setLeadName(storedName);
       setLeadEmail(storedEmail);
+      setLeadMobile(storedMobile);
     }
   }, []);
 
-  // Auto-focus input when lead form is shown
+  // Auto-focus input when lead form is shown (fixed: only triggers once on form open, no focus jumping)
   useEffect(() => {
     if (showLeadForm) {
-      setTimeout(() => {
-        if (!leadName?.trim() && nameInputRef.current) {
-          nameInputRef.current.focus();
-        } else if (emailInputRef.current) {
-          emailInputRef.current.focus();
-        }
-      }, 100);
+      const timer = setTimeout(() => {
+        nameInputRef.current?.focus();
+      }, 80);
+      return () => clearTimeout(timer);
     }
-  }, [showLeadForm, leadName]);
+  }, [showLeadForm]);
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -136,17 +165,24 @@ export default function WidgetPage() {
         // If visitorInfo is not yet known, check if any conversation has visitor data
         const currentStoredName = localStorage.getItem('chatdesk_visitor_name');
         const currentStoredEmail = localStorage.getItem('chatdesk_visitor_email');
-        if (!currentStoredName || !currentStoredEmail) {
+        const currentStoredMobile = localStorage.getItem('chatdesk_visitor_mobile');
+        if (!currentStoredName || !currentStoredEmail || !currentStoredMobile) {
           const convWithVisitor = data.find(c => c.Visitor?.name && c.Visitor.name !== 'Guest' && c.Visitor?.email);
           if (convWithVisitor) {
-            localStorage.setItem('chatdesk_visitor_name', convWithVisitor.Visitor.name);
-            localStorage.setItem('chatdesk_visitor_email', convWithVisitor.Visitor.email);
+            const vName = convWithVisitor.Visitor.name;
+            const vEmail = convWithVisitor.Visitor.email;
+            const vMobile = convWithVisitor.Visitor.phone || convWithVisitor.Visitor.mobile || '';
+            localStorage.setItem('chatdesk_visitor_name', vName);
+            localStorage.setItem('chatdesk_visitor_email', vEmail);
+            if (vMobile) localStorage.setItem('chatdesk_visitor_mobile', vMobile);
             setVisitorInfo({
-              name: convWithVisitor.Visitor.name,
-              email: convWithVisitor.Visitor.email
+              name: vName,
+              email: vEmail,
+              phone: vMobile
             });
-            setLeadName(convWithVisitor.Visitor.name);
-            setLeadEmail(convWithVisitor.Visitor.email);
+            setLeadName(vName);
+            setLeadEmail(vEmail);
+            if (vMobile) setLeadMobile(vMobile);
           }
         }
       }
@@ -211,14 +247,20 @@ export default function WidgetPage() {
         setPendingCategory(null);
 
         if (data.conversation?.Visitor?.name && data.conversation.Visitor.name !== 'Guest' && data.conversation?.Visitor?.email) {
-          localStorage.setItem('chatdesk_visitor_name', data.conversation.Visitor.name);
-          localStorage.setItem('chatdesk_visitor_email', data.conversation.Visitor.email);
+          const vName = data.conversation.Visitor.name;
+          const vEmail = data.conversation.Visitor.email;
+          const vMobile = data.conversation.Visitor.phone || data.conversation.Visitor.mobile || '';
+          localStorage.setItem('chatdesk_visitor_name', vName);
+          localStorage.setItem('chatdesk_visitor_email', vEmail);
+          if (vMobile) localStorage.setItem('chatdesk_visitor_mobile', vMobile);
           setVisitorInfo({
-            name: data.conversation.Visitor.name,
-            email: data.conversation.Visitor.email
+            name: vName,
+            email: vEmail,
+            phone: vMobile
           });
-          setLeadName(data.conversation.Visitor.name);
-          setLeadEmail(data.conversation.Visitor.email);
+          setLeadName(vName);
+          setLeadEmail(vEmail);
+          if (vMobile) setLeadMobile(vMobile);
         }
 
         if (socket) {
@@ -269,12 +311,14 @@ export default function WidgetPage() {
   const handleSelectCategory = async (category) => {
     const storedName = (visitorInfo.name || localStorage.getItem('chatdesk_visitor_name') || '').trim();
     const storedEmail = (visitorInfo.email || localStorage.getItem('chatdesk_visitor_email') || '').trim();
-    const hasVisitor = Boolean(storedName && storedEmail);
+    const storedMobile = (visitorInfo.phone || localStorage.getItem('chatdesk_visitor_mobile') || '').trim();
+    const hasVisitor = Boolean(storedName && storedEmail && storedMobile);
 
     if (!hasVisitor) {
       setPendingCategory(category);
       setLeadName(storedName);
       setLeadEmail(storedEmail);
+      setLeadMobile(storedMobile);
       setLeadErrors({});
       setShowLeadForm(true);
       return;
@@ -419,6 +463,7 @@ export default function WidgetPage() {
     const activeVisitor = currentVisitor || visitorInfo;
     const vName = activeVisitor.name || localStorage.getItem('chatdesk_visitor_name') || '';
     const vEmail = activeVisitor.email || localStorage.getItem('chatdesk_visitor_email') || '';
+    const vMobile = activeVisitor.phone || activeVisitor.mobile || localStorage.getItem('chatdesk_visitor_mobile') || '';
 
     try {
       const res = await fetch(`${API_BASE}/api/chat`, {
@@ -430,7 +475,9 @@ export default function WidgetPage() {
           user_id: guestId,
           content: contentToSend,
           visitor_name: vName,
-          visitor_email: vEmail
+          visitor_email: vEmail,
+          visitor_phone: vMobile,
+          visitor_mobile: vMobile
         })
       });
 
@@ -461,16 +508,20 @@ export default function WidgetPage() {
 
     const content = newMessage.trim();
 
-    // Check if visitor details are already collected
-    const storedName = visitorInfo.name || localStorage.getItem('chatdesk_visitor_name') || '';
-    const storedEmail = visitorInfo.email || localStorage.getItem('chatdesk_visitor_email') || '';
-    const hasVisitor = Boolean(storedName && storedEmail);
+    // Check if all three visitor details are already collected
+    const storedName = (visitorInfo.name || localStorage.getItem('chatdesk_visitor_name') || '').trim();
+    const storedEmail = (visitorInfo.email || localStorage.getItem('chatdesk_visitor_email') || '').trim();
+    const storedMobile = (visitorInfo.phone || localStorage.getItem('chatdesk_visitor_mobile') || '').trim();
+    const hasVisitor = Boolean(storedName && storedEmail && storedMobile);
 
     if (!hasVisitor) {
       // Store visitor's original message temporarily - do not call AI/backend yet
       setPendingMessage(content);
       setNewMessage('');
       setShowEmojiPicker(false);
+      setLeadName(storedName);
+      setLeadEmail(storedEmail);
+      setLeadMobile(storedMobile);
       setLeadErrors({});
       setShowLeadForm(true);
 
@@ -481,7 +532,7 @@ export default function WidgetPage() {
     }
 
     // Already collected - send message normally
-    await executeSendMessage(content, { name: storedName, email: storedEmail });
+    await executeSendMessage(content, { name: storedName, email: storedEmail, phone: storedMobile });
   };
 
   const handleCancelLead = () => {
@@ -498,17 +549,28 @@ export default function WidgetPage() {
 
     const trimmedName = leadName.trim();
     const trimmedEmail = leadEmail.trim();
+    const trimmedMobile = leadMobile.trim();
     const errors = {};
 
     if (!trimmedName) {
-      errors.name = 'Name is required.';
+      errors.name = 'Full name is required.';
+    } else if (trimmedName.length < 2) {
+      errors.name = 'Please enter your full name.';
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!trimmedEmail) {
-      errors.email = 'Email is required.';
+      errors.email = 'Email address is required.';
     } else if (!emailRegex.test(trimmedEmail)) {
       errors.email = 'Please enter a valid email address.';
+    }
+
+    // International phone regex: supports +, spaces, digits, hyphens, parentheses (7 to 20 chars)
+    const phoneRegex = /^\+?[\d\s\-()]{7,20}$/;
+    if (!trimmedMobile) {
+      errors.mobile = 'Mobile number is required.';
+    } else if (!phoneRegex.test(trimmedMobile)) {
+      errors.mobile = 'Please enter a valid mobile number (e.g. +91 98765 43210).';
     }
 
     if (Object.keys(errors).length > 0) {
@@ -528,27 +590,30 @@ export default function WidgetPage() {
           body: JSON.stringify({
             conversation_id: conversation?.id || null,
             name: trimmedName,
-            email: trimmedEmail
+            email: trimmedEmail,
+            phone: trimmedMobile,
+            mobile: trimmedMobile
           })
         });
 
         if (!apiRes.ok) {
           const errData = await apiRes.json().catch(() => ({}));
-          setLeadErrors({ email: errData.error || 'Failed to save details. Please try again.' });
+          setLeadErrors({ mobile: errData.error || 'Failed to save details. Please try again.' });
           setIsSubmittingLead(false);
           return;
         }
       } catch (apiErr) {
         console.error('Failed to sync visitor session with server:', apiErr);
-        setLeadErrors({ email: 'Network error saving details. Please try again.' });
+        setLeadErrors({ mobile: 'Network error saving details. Please try again.' });
         setIsSubmittingLead(false);
         return;
       }
 
-      // Save name and email in chatbot visitor/session state and localStorage
+      // Save name, email, and mobile in localStorage and state
       localStorage.setItem('chatdesk_visitor_name', trimmedName);
       localStorage.setItem('chatdesk_visitor_email', trimmedEmail);
-      const updatedVisitor = { name: trimmedName, email: trimmedEmail };
+      localStorage.setItem('chatdesk_visitor_mobile', trimmedMobile);
+      const updatedVisitor = { name: trimmedName, email: trimmedEmail, phone: trimmedMobile };
       setVisitorInfo(updatedVisitor);
 
       // Close the form
@@ -623,9 +688,9 @@ export default function WidgetPage() {
   );
 
   return (
-    <div className="fixed inset-0 pointer-events-none flex flex-col justify-end items-end-1 pb-5 pr-5 font-sans">
+    <div data-widget-page="true" className="fixed inset-0 pointer-events-none flex flex-col justify-end items-end p-2 sm:p-3 font-sans bg-transparent">
       {isOpen ? (
-        <div className={`pointer-events-auto bg-white dark:bg-gray-900 rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-gray-200 dark:border-gray-800 transition-all duration-500 transform scale-100 origin-bottom-right ${isMaximized ? 'w-[95vw] h-[90vh] max-w-[1200px]' : 'h-[600px] w-[380px]'}`}>
+        <div className={`pointer-events-auto bg-white dark:bg-gray-900 rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-gray-200/80 dark:border-gray-800 transition-all duration-300 transform scale-100 origin-bottom-right ${isMaximized ? 'w-[95vw] h-[95vh] max-w-[1200px]' : 'h-[620px] w-[390px] max-w-[92vw] max-h-[88vh]'}`}>
 
           {/* Main Layout Container */}
           <div className="flex flex-1 overflow-hidden relative">
@@ -635,7 +700,7 @@ export default function WidgetPage() {
               <div className="p-4 flex flex-col h-full uppercase">
                 <button
                   onClick={startNewChat}
-                  className="flex items-center justify-center space-x-2 w-full py-2.5 px-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl text-sm font-medium hover:bg-gray-100 dark:hover:bg-gray-800 transition-all mb-4"
+                  className="flex items-center justify-center space-x-2 w-full py-2.5 px-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl text-sm font-medium hover:bg-gray-100 dark:hover:bg-gray-800 transition-all mb-4 cursor-pointer"
                 >
                   <Plus size={16} />
                   <span>New Chat</span>
@@ -663,7 +728,7 @@ export default function WidgetPage() {
                       <span className="truncate text-sm flex-1">{chat.title || 'Untitled Chat'}</span>
                       <button
                         onClick={(e) => handleDeleteConversation(e, chat.id)}
-                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-500 rounded transition-all"
+                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-500 rounded transition-all cursor-pointer"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -679,51 +744,65 @@ export default function WidgetPage() {
             {/* Chat Pane */}
             <div className="flex-1 flex flex-col relative bg-white dark:bg-gray-900 rounded-r-2xl">
 
-              {/* Header */}
+              {/* Tidio-Inspired Header */}
               <div
-                className="p-4 flex items-center justify-between shadow-sm text-white relative h-16 shrink-0 rounded-t-2xl md:rounded-tl-none"
-                style={{ backgroundColor: botConfig.color_theme || '#4f46e5' }}
+                className="px-4 py-3.5 flex items-center justify-between text-white relative h-16 shrink-0 rounded-t-2xl shadow-sm select-none"
+                style={{
+                  background: `linear-gradient(135deg, ${botConfig.color_theme || '#4f46e5'} 0%, ${adjustColor(botConfig.color_theme || '#4f46e5', -25)} 100%)`
+                }}
               >
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-3 min-w-0">
                   {isMaximized && (
                     <button
                       onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                      className="p-1.5 hover:bg-white/20 rounded-lg transition-colors mr-1"
+                      className="p-1.5 hover:bg-white/20 active:bg-white/30 rounded-lg transition-colors mr-0.5 cursor-pointer"
+                      title="Toggle chat history"
                     >
-                      <Menu size={20} />
+                      <Menu size={18} />
                     </button>
                   )}
-                  <div className="h-10 w-10 bg-white rounded-full flex items-center justify-center shadow-inner overflow-hidden shrink-0">
+                  <div className="relative h-10 w-10 bg-white rounded-full flex items-center justify-center shadow-md overflow-hidden shrink-0 border-2 border-white/50">
                     {botConfig.avatar_url ? (
-                      <img src={botConfig.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+                      <img src={botConfig.avatar_url} alt={botConfig.name || "Chatbot"} className="w-full h-full object-cover" />
                     ) : (
-                      <Bot size={24} style={{ color: botConfig.color_theme || '#4f46e5' }} />
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path
+                          d="M12 2C6.477 2 2 6.15 2 11.27c0 2.76 1.3 5.23 3.35 6.86L4.2 21.3a.75.75 0 00.98.94l4.35-1.92c.8.21 1.63.32 2.47.32 5.523 0 10-4.15 10-9.27S17.523 2 12 2z"
+                          fill={botConfig.color_theme || '#4f46e5'}
+                        />
+                        <circle cx="8" cy="11.5" r="1.2" fill="#ffffff" />
+                        <circle cx="12" cy="11.5" r="1.2" fill="#ffffff" />
+                        <circle cx="16" cy="11.5" r="1.2" fill="#ffffff" />
+                      </svg>
                     )}
                   </div>
-                  <div className="min-w-0">
-                    <h3 className="font-bold text-lg leading-tight truncate">{botConfig.name}</h3>
-                    <p className="text-xs text-white text-opacity-80 flex items-center">
-                      <span className="w-2 h-2 rounded-full bg-green-400 mr-1 animate-pulse"></span> Online
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-semibold text-base leading-tight truncate text-white">{botConfig.name || "Support Assistant"}</h3>
+                    <p className="text-[11px] text-white/90 flex items-center font-medium mt-0.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse shadow-sm"></span>
+                      Online <span className="opacity-75 ml-1">| Replies instantly</span>
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-1 shrink-0">
                   <button
                     onClick={() => setIsMaximized(!isMaximized)}
-                    className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
-                    title={isMaximized ? "Restore" : "Chat History"}
+                    className="p-1.5 hover:bg-white/20 active:bg-white/30 rounded-lg transition-colors cursor-pointer"
+                    title={isMaximized ? "Restore size" : "Expand window"}
                   >
-                    {isMaximized ? <Minimize2 size={18} /> : <History size={18} />}
+                    {isMaximized ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
                   </button>
                   <button
                     onClick={() => setIsOpen(false)}
-                    className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+                    className="p-1.5 hover:bg-white/20 active:bg-white/30 rounded-lg transition-colors cursor-pointer"
+                    title="Minimize chat"
                   >
                     <Minus size={18} />
                   </button>
                   <button
                     onClick={() => setIsOpen(false)}
-                    className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+                    className="p-1.5 hover:bg-white/20 active:bg-white/30 rounded-lg transition-colors cursor-pointer"
+                    title="Close chat"
                   >
                     <X size={18} />
                   </button>
@@ -929,26 +1008,26 @@ export default function WidgetPage() {
                   );
                 })}
 
-                {/* Inline Name + Email Lead Capture Form */}
+                {/* Inline 3-Field Lead Capture Form */}
                 {showLeadForm && (
-                  <div className="flex justify-start animate-in fade-in slide-in-from-bottom-3 duration-300">
-                    <div className="w-full max-w-sm bg-white dark:bg-gray-800 rounded-2xl rounded-tl-none p-5 shadow-md border border-gray-100 dark:border-gray-700">
-                      <div className="flex items-start justify-between mb-3">
+                  <div className="flex justify-start animate-in fade-in slide-in-from-bottom-2 duration-300 my-2">
+                    <div className="w-full max-w-sm bg-white dark:bg-gray-800 rounded-2xl p-5 shadow-lg border border-gray-100 dark:border-gray-750">
+                      <div className="flex items-start justify-between mb-3.5">
                         <div className="flex items-center space-x-2.5">
                           <div
-                            className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+                            className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-sm"
                             style={{ backgroundColor: `${botConfig.color_theme || '#4f46e5'}20` }}
                           >
                             <User size={16} style={{ color: botConfig.color_theme || '#4f46e5' }} />
                           </div>
                           <div>
                             <h4 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">
-                              {pendingCategory ? 'Please provide your details' : 'Before we continue, please share your details.'}
+                              {pendingCategory ? 'Please provide your details' : 'Introduce yourself to start chatting'}
                             </h4>
                             <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
                               {pendingCategory
-                                ? `To view ${pendingCategory.name}, please enter your name & email.`
-                                : 'We need your name and email to proceed.'}
+                                ? `To view ${pendingCategory.name}, please share your details.`
+                                : 'Please fill in your details to connect with our support team.'}
                             </p>
                           </div>
                         </div>
@@ -964,13 +1043,14 @@ export default function WidgetPage() {
 
                       <form onSubmit={handleLeadSubmit} noValidate className="space-y-3 pt-1">
                         <div>
-                          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Name
+                          <label htmlFor="lead-name" className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                            Full Name <span className="text-red-500">*</span>
                           </label>
                           <input
+                            id="lead-name"
                             ref={nameInputRef}
                             type="text"
-                            placeholder="Enter your name"
+                            placeholder="John Smith"
                             value={leadName}
                             disabled={isSubmittingLead}
                             onChange={(e) => {
@@ -983,26 +1063,27 @@ export default function WidgetPage() {
                                 emailInputRef.current?.focus();
                               }
                             }}
-                            className={`w-full text-sm px-3.5 py-2.5 rounded-xl border bg-gray-50 dark:bg-gray-900/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none transition-all ${leadErrors.name
+                            className={`w-full text-sm px-3.5 py-2.5 rounded-xl border bg-gray-50/80 dark:bg-gray-900/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none transition-all ${leadErrors.name
                               ? 'border-red-400 focus:ring-2 focus:ring-red-400/30'
-                              : 'border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500'
+                              : 'border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500'
                               }`}
                           />
                           {leadErrors.name && (
-                            <p className="text-[11px] text-red-500 mt-1 flex items-center">
+                            <p className="text-[11px] text-red-500 mt-1 flex items-center font-medium">
                               <AlertCircle size={12} className="mr-1 shrink-0" /> {leadErrors.name}
                             </p>
                           )}
                         </div>
 
                         <div>
-                          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Email
+                          <label htmlFor="lead-email" className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                            Email Address <span className="text-red-500">*</span>
                           </label>
                           <input
+                            id="lead-email"
                             ref={emailInputRef}
                             type="email"
-                            placeholder="Enter your email"
+                            placeholder="john@example.com"
                             value={leadEmail}
                             disabled={isSubmittingLead}
                             onChange={(e) => {
@@ -1012,34 +1093,67 @@ export default function WidgetPage() {
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
                                 e.preventDefault();
-                                handleLeadSubmit(e);
+                                mobileInputRef.current?.focus();
                               }
                             }}
-                            className={`w-full text-sm px-3.5 py-2.5 rounded-xl border bg-gray-50 dark:bg-gray-900/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none transition-all ${leadErrors.email
+                            className={`w-full text-sm px-3.5 py-2.5 rounded-xl border bg-gray-50/80 dark:bg-gray-900/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none transition-all ${leadErrors.email
                               ? 'border-red-400 focus:ring-2 focus:ring-red-400/30'
-                              : 'border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500'
+                              : 'border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500'
                               }`}
                           />
                           {leadErrors.email && (
-                            <p className="text-[11px] text-red-500 mt-1 flex items-center">
+                            <p className="text-[11px] text-red-500 mt-1 flex items-center font-medium">
                               <AlertCircle size={12} className="mr-1 shrink-0" /> {leadErrors.email}
                             </p>
                           )}
                         </div>
 
-                        <div className="flex items-center space-x-2 mt-2">
+                        <div>
+                          <label htmlFor="lead-mobile" className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                            Mobile Number <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            id="lead-mobile"
+                            ref={mobileInputRef}
+                            type="tel"
+                            placeholder="+91 98765 43210"
+                            value={leadMobile}
+                            disabled={isSubmittingLead}
+                            onChange={(e) => {
+                              setLeadMobile(e.target.value);
+                              if (leadErrors.mobile) setLeadErrors(prev => ({ ...prev, mobile: '' }));
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleLeadSubmit(e);
+                              }
+                            }}
+                            className={`w-full text-sm px-3.5 py-2.5 rounded-xl border bg-gray-50/80 dark:bg-gray-900/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none transition-all ${leadErrors.mobile
+                              ? 'border-red-400 focus:ring-2 focus:ring-red-400/30'
+                              : 'border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500'
+                              }`}
+                          />
+                          {leadErrors.mobile && (
+                            <p className="text-[11px] text-red-500 mt-1 flex items-center font-medium">
+                              <AlertCircle size={12} className="mr-1 shrink-0" /> {leadErrors.mobile}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center space-x-2.5 pt-1.5">
                           <button
                             type="button"
                             onClick={handleCancelLead}
                             disabled={isSubmittingLead}
-                            className="w-1/3 py-2.5 px-3 text-gray-600 dark:text-gray-300 font-medium text-xs rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all disabled:opacity-50"
+                            className="w-1/3 py-2.5 px-3 text-gray-600 dark:text-gray-300 font-medium text-xs rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all disabled:opacity-50 cursor-pointer"
                           >
                             Cancel
                           </button>
                           <button
                             type="submit"
                             disabled={isSubmittingLead}
-                            className="flex-1 py-2.5 px-4 text-white font-medium text-sm rounded-xl transition-all shadow-md active:scale-[0.99] disabled:opacity-60 flex items-center justify-center space-x-2"
+                            className="flex-1 py-2.5 px-4 text-white font-medium text-sm rounded-xl transition-all shadow-md hover:shadow-lg active:scale-[0.99] disabled:opacity-60 flex items-center justify-center space-x-2 cursor-pointer"
                             style={{ backgroundColor: botConfig.color_theme || '#4f46e5' }}
                           >
                             {isSubmittingLead ? (
@@ -1048,7 +1162,7 @@ export default function WidgetPage() {
                                 <span>Saving...</span>
                               </>
                             ) : (
-                              <span>Continue</span>
+                              <span>Start Conversation</span>
                             )}
                           </button>
                         </div>
@@ -1224,17 +1338,40 @@ export default function WidgetPage() {
           </div>
         </div>
       ) : (
-        <button
-          onClick={() => setIsOpen(true)}
-          className="pointer-events-auto rounded-full w-14 h-14 shadow-2xl flex items-center justify-center hover:scale-110 transition-all duration-200 text-white overflow-hidden"
-          style={{ backgroundColor: botConfig.color_theme || '#4f46e5' }}
-        >
-          {botConfig.avatar_url ? (
-            <img src={botConfig.avatar_url} alt="Open Chat" className="w-full h-full object-cover" />
-          ) : (
-            <Bot size={28} />
-          )}
-        </button>
+        <div className="w-[84px] h-[84px] flex items-center justify-center pointer-events-auto bg-transparent">
+          <button
+            onClick={() => setIsOpen(true)}
+            aria-label="Open support chat"
+            className="group relative w-[60px] h-[60px] rounded-full flex items-center justify-center text-white transition-all duration-300 ease-out hover:scale-105 active:scale-95 focus:outline-none focus:ring-4 focus:ring-indigo-500/30 cursor-pointer"
+            style={{
+              backgroundColor: botConfig.color_theme || '#4f46e5',
+              boxShadow: `0 10px 25px -3px ${(botConfig.color_theme || '#4f46e5')}66, 0 4px 10px -2px rgba(0,0,0,0.12)`
+            }}
+          >
+            {/* Online active status indicator badge */}
+            <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 pointer-events-none">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500 border-2 border-white dark:border-gray-900 shadow-sm"></span>
+            </span>
+
+            {/* Tidio-Inspired Vector Chat Bubble Icon */}
+            <div className="transition-transform duration-300 group-hover:scale-110 flex items-center justify-center">
+              {botConfig.avatar_url ? (
+                <img src={botConfig.avatar_url} alt={botConfig.name || "Chatbot"} className="w-10 h-10 rounded-full object-cover shadow-sm" />
+              ) : (
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-white drop-shadow-sm">
+                  <path
+                    d="M12 2C6.477 2 2 6.15 2 11.27c0 2.76 1.3 5.23 3.35 6.86L4.2 21.3a.75.75 0 00.98.94l4.35-1.92c.8.21 1.63.32 2.47.32 5.523 0 10-4.15 10-9.27S17.523 2 12 2z"
+                    fill="#ffffff"
+                  />
+                  <circle cx="8" cy="11.5" r="1.3" fill={botConfig.color_theme || '#4f46e5'} />
+                  <circle cx="12" cy="11.5" r="1.3" fill={botConfig.color_theme || '#4f46e5'} />
+                  <circle cx="16" cy="11.5" r="1.3" fill={botConfig.color_theme || '#4f46e5'} />
+                </svg>
+              )}
+            </div>
+          </button>
+        </div>
       )}
     </div>
   );

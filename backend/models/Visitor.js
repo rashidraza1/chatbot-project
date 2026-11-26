@@ -15,6 +15,10 @@ const Visitor = sequelize.define('Visitor', {
     type: DataTypes.STRING,
     allowNull: true,
   },
+  phone: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
   last_page_url: {
     type: DataTypes.STRING,
     allowNull: true,

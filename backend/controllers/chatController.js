@@ -4,9 +4,10 @@ const { searchRelevantChunks } = require('../services/pdfService');
 
 exports.processChat = async (req, res) => {
   try {
-    const { bot_id, conversation_id, user_id, content, visitor_name, visitor_email, name, email } = req.body;
+    const { bot_id, conversation_id, user_id, content, visitor_name, visitor_email, visitor_phone, visitor_mobile, name, email, phone, mobile } = req.body;
     const vName = (visitor_name || name || '').trim();
     const vEmail = (visitor_email || email || '').trim();
+    const vPhone = (visitor_phone || visitor_mobile || phone || mobile || '').trim();
     let conversation;
 
     if (conversation_id) {
@@ -18,6 +19,7 @@ exports.processChat = async (req, res) => {
       const visitor = await Visitor.create({
         name: vName || 'Guest',
         email: vEmail || null,
+        phone: vPhone || null,
         last_page_url: req.headers.referer || null,
         last_seen: new Date()
       });
@@ -36,11 +38,12 @@ exports.processChat = async (req, res) => {
       conversation = await Conversation.findByPk(conversation.id, { include: [Bot, Visitor] });
     } else {
       // If conversation exists and visitor details are provided, update visitor
-      if (conversation.visitor_id && (vName || vEmail)) {
+      if (conversation.visitor_id && (vName || vEmail || vPhone)) {
         await Visitor.update(
           {
             ...(vName ? { name: vName } : {}),
             ...(vEmail ? { email: vEmail } : {}),
+            ...(vPhone ? { phone: vPhone } : {}),
             last_seen: new Date()
           },
           { where: { id: conversation.visitor_id } }
@@ -129,9 +132,10 @@ exports.processChat = async (req, res) => {
 
 exports.updateVisitorSession = async (req, res) => {
   try {
-    const { conversation_id, name, email } = req.body;
+    const { conversation_id, name, email, phone, mobile } = req.body;
     const vName = (name || '').trim();
     const vEmail = (email || '').trim();
+    const vPhone = (phone || mobile || '').trim();
 
     if (conversation_id) {
       const conv = await Conversation.findByPk(conversation_id);
@@ -140,6 +144,7 @@ exports.updateVisitorSession = async (req, res) => {
           {
             ...(vName ? { name: vName } : {}),
             ...(vEmail ? { email: vEmail } : {}),
+            ...(vPhone ? { phone: vPhone } : {}),
             last_seen: new Date()
           },
           { where: { id: conv.visitor_id } }
@@ -152,6 +157,7 @@ exports.updateVisitorSession = async (req, res) => {
     const visitor = await Visitor.create({
       name: vName || 'Guest',
       email: vEmail || null,
+      phone: vPhone || null,
       last_page_url: req.headers.referer || null,
       last_seen: new Date()
     });
