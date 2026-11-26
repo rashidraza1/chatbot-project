@@ -124,6 +124,14 @@ io.on('connection', (socket) => {
   chatHandler(io, socket);
 });
 
+// Route Socket.io HTTP requests through Express for Phusion Passenger compatibility
+app.use((req, res, next) => {
+  if (req.originalUrl && req.originalUrl.startsWith('/socket.io')) {
+    return io.engine.handleRequest(req, res);
+  }
+  next();
+});
+
 // API Routes
 app.get('/health', (req, res) => res.status(200).json({ status: 'OK' }));
 
