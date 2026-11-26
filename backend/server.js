@@ -181,8 +181,20 @@ const startServer = () => {
         await sequelize.query("ALTER TABLE visitors ADD COLUMN phone VARCHAR(255) NULL AFTER email");
         console.log('Added missing phone column to visitors table');
       }
+
+      const [cbVisitorCols] = await sequelize.query("SHOW COLUMNS FROM chatbot_callback_requests LIKE 'visitor_id'");
+      if (cbVisitorCols.length === 0) {
+        await sequelize.query("ALTER TABLE chatbot_callback_requests ADD COLUMN visitor_id INT NULL AFTER item_id");
+        console.log('Added missing visitor_id column to chatbot_callback_requests');
+      }
+
+      const [cbConvCols] = await sequelize.query("SHOW COLUMNS FROM chatbot_callback_requests LIKE 'conversation_id'");
+      if (cbConvCols.length === 0) {
+        await sequelize.query("ALTER TABLE chatbot_callback_requests ADD COLUMN conversation_id INT NULL AFTER visitor_id");
+        console.log('Added missing conversation_id column to chatbot_callback_requests');
+      }
     } catch (e) {
-      console.log('Notice checking phone column:', e.message);
+      console.log('Notice checking database columns:', e.message);
     }
     server.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);

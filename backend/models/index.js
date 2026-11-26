@@ -58,6 +58,12 @@ ChatbotCallbackRequest.belongsTo(ChatbotCategory, { foreignKey: 'category_id' })
 ChatbotItem.hasMany(ChatbotCallbackRequest, { foreignKey: 'item_id', onDelete: 'CASCADE' });
 ChatbotCallbackRequest.belongsTo(ChatbotItem, { foreignKey: 'item_id' });
 
+Visitor.hasMany(ChatbotCallbackRequest, { foreignKey: 'visitor_id', constraints: false });
+ChatbotCallbackRequest.belongsTo(Visitor, { foreignKey: 'visitor_id', constraints: false });
+
+Conversation.hasMany(ChatbotCallbackRequest, { foreignKey: 'conversation_id', constraints: false });
+ChatbotCallbackRequest.belongsTo(Conversation, { foreignKey: 'conversation_id', constraints: false });
+
 module.exports = {
   sequelize,
   User,

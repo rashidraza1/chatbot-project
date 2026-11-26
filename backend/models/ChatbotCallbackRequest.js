@@ -19,6 +19,14 @@ const ChatbotCallbackRequest = sequelize.define('ChatbotCallbackRequest', {
     type: DataTypes.INTEGER,
     allowNull: false,
   },
+  visitor_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  conversation_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   mobile: {
     type: DataTypes.STRING,
     allowNull: false,

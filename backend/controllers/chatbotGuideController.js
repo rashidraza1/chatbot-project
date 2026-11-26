@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs');
-const { Bot, ChatbotCategory, ChatbotItem, ChatbotCallbackRequest, PdfDocument } = require('../models');
+const { Bot, ChatbotCategory, ChatbotItem, ChatbotCallbackRequest, PdfDocument, Visitor, Conversation } = require('../models');
 
 // GET /api/chatbot/:botId/categories
 exports.getCategories = async (req, res) => {
@@ -159,24 +159,22 @@ exports.downloadDocument = async (req, res) => {
 // POST /api/chatbot/callback
 exports.requestCallback = async (req, res) => {
   try {
-    const { bot_id, category_id, item_id, mobile } = req.body;
+    const { bot_id, category_id, item_id, mobile, visitor_id, conversation_id } = req.body;
 
     if (!bot_id || !category_id || !item_id || !mobile) {
       return res.status(400).json({ error: 'bot_id, category_id, item_id, and mobile are required.' });
     }
 
-    // Mobile number validation: Clean and check Indian 10-digit mobile number
+    // Mobile number validation: support international numbers with country codes and Indian 10-digit numbers
     const trimmed = String(mobile).trim();
-    // Match optional +91 or 91, then 10 digits starting with 6, 7, 8, or 9
-    const indianMobileRegex = /^(?:\+91|91)?[6-9]\d{9}$/;
-    if (!indianMobileRegex.test(trimmed)) {
+    const phoneRegex = /^\+?[\d\s\-()]{7,20}$/;
+    const digitsOnly = trimmed.replace(/\D/g, '');
+
+    if (!phoneRegex.test(trimmed) || digitsOnly.length < 7 || digitsOnly.length > 15) {
       return res.status(400).json({
-        error: 'Please enter a valid 10-digit Indian mobile number (e.g., 9876543210).'
+        error: 'Please enter a valid mobile number (minimum 7 digits, e.g., +91 98765 43210).'
       });
     }
-
-    // Extract exact 10 digits
-    const cleanedMobile = trimmed.replace(/\D/g, '').slice(-10);
 
     // Security validation: verify relationship between bot, category, and item
     const item = await ChatbotItem.findByPk(item_id, {
@@ -192,18 +190,44 @@ exports.requestCallback = async (req, res) => {
       return res.status(400).json({ error: 'Invalid category or item relationship for this bot.' });
     }
 
+    let finalVisitorId = visitor_id ? parseInt(visitor_id, 10) : null;
+    let finalConversationId = conversation_id ? parseInt(conversation_id, 10) : null;
+
+    if (!finalVisitorId) {
+      const matchedVisitor = await Visitor.findOne({
+        where: { phone: trimmed },
+        order: [['id', 'DESC']]
+      });
+      if (matchedVisitor) {
+        finalVisitorId = matchedVisitor.id;
+      }
+    }
+
+    if (!finalConversationId && finalVisitorId) {
+      const matchedConv = await Conversation.findOne({
+        where: { visitor_id: finalVisitorId, bot_id },
+        order: [['id', 'DESC']]
+      });
+      if (matchedConv) {
+        finalConversationId = matchedConv.id;
+      }
+    }
+
     const callbackRecord = await ChatbotCallbackRequest.create({
       bot_id,
       category_id,
       item_id,
-      mobile: cleanedMobile,
+      mobile: trimmed,
+      visitor_id: finalVisitorId,
+      conversation_id: finalConversationId,
       status: 'pending'
     });
 
     return res.status(201).json({
       success: true,
       message: 'Callback request received successfully.',
-      callback_id: callbackRecord.id
+      callback_id: callbackRecord.id,
+      mobile: trimmed
     });
   } catch (error) {
     console.error('Error recording callback request:', error);

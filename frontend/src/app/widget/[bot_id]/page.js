@@ -72,6 +72,35 @@ export default function WidgetPage() {
   const [callbackMobile, setCallbackMobile] = useState('');
   const [callbackError, setCallbackError] = useState('');
   const [isSubmittingCallback, setIsSubmittingCallback] = useState(false);
+  const [isEditingCallbackPhone, setIsEditingCallbackPhone] = useState(false);
+
+  const isValidPhone = (p) => {
+    if (!p) return false;
+    const trimmed = String(p).trim();
+    const phoneRegex = /^\+?[\d\s\-()]{7,20}$/;
+    const digitsOnly = trimmed.replace(/\D/g, '');
+    return phoneRegex.test(trimmed) && digitsOnly.length >= 7 && digitsOnly.length <= 15;
+  };
+
+  const getAuthoritativeVisitorPhone = () => {
+    if (conversation?.Visitor?.phone) {
+      const p = String(conversation.Visitor.phone).trim();
+      if (isValidPhone(p)) return p;
+    }
+    if (visitorInfo?.phone) {
+      const p = String(visitorInfo.phone).trim();
+      if (isValidPhone(p)) return p;
+    }
+    if (leadMobile) {
+      const p = String(leadMobile).trim();
+      if (isValidPhone(p)) return p;
+    }
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('chatdesk_visitor_mobile') || '';
+      if (isValidPhone(stored.trim())) return stored.trim();
+    }
+    return '';
+  };
 
   const messagesEndRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -374,24 +403,41 @@ export default function WidgetPage() {
     if (e && e.preventDefault) e.preventDefault();
     if (isSubmittingCallback) return;
 
-    const trimmed = (callbackMobile || '').trim();
-    const indianMobileRegex = /^(?:\+91|91)?[6-9]\d{9}$/;
+    const phoneToUse = (callbackMobile || getAuthoritativeVisitorPhone() || '').trim();
 
-    if (!trimmed) {
-      setCallbackError('Please enter your 10-digit mobile number.');
+    if (!phoneToUse || !isValidPhone(phoneToUse)) {
+      setCallbackError('Please enter a valid mobile number (minimum 7 digits, e.g. +91 98765 43210).');
+      setIsEditingCallbackPhone(true);
       return;
     }
 
-    if (!indianMobileRegex.test(trimmed)) {
-      setCallbackError('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
-      return;
-    }
-
-    const cleaned = trimmed.replace(/\D/g, '').slice(-10);
     setCallbackError('');
     setIsSubmittingCallback(true);
 
     try {
+      // If visitor updated or added their number, sync session with backend and localStorage
+      const existingSaved = getAuthoritativeVisitorPhone();
+      if (phoneToUse !== existingSaved || !visitorInfo.phone) {
+        localStorage.setItem('chatdesk_visitor_mobile', phoneToUse);
+        setVisitorInfo(prev => ({ ...prev, phone: phoneToUse }));
+        setLeadMobile(phoneToUse);
+
+        try {
+          await fetch(`${API_BASE}/api/chat/visitor`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              conversation_id: conversation?.id || null,
+              name: visitorInfo.name || localStorage.getItem('chatdesk_visitor_name') || 'Guest',
+              email: visitorInfo.email || localStorage.getItem('chatdesk_visitor_email') || null,
+              phone: phoneToUse
+            })
+          });
+        } catch (vErr) {
+          console.warn('Visitor sync notice during callback:', vErr);
+        }
+      }
+
       const res = await fetch(`${API_BASE}/api/chatbot/callback`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -399,24 +445,27 @@ export default function WidgetPage() {
           bot_id,
           category_id: selectedCategory?.id,
           item_id: selectedItem?.id,
-          mobile: cleaned
+          mobile: phoneToUse,
+          visitor_id: conversation?.visitor_id || conversation?.Visitor?.id || visitorInfo.id || (localStorage.getItem('chatdesk_visitor_id') ? parseInt(localStorage.getItem('chatdesk_visitor_id'), 10) : null),
+          conversation_id: conversation?.id || null
         })
       });
 
       const data = await res.json();
       if (!res.ok) {
         setCallbackError(data.error || 'Failed to submit callback request.');
+        setIsSubmittingCallback(false);
         return;
       }
 
       setShowCallbackModal(false);
-      setCallbackMobile('');
+      setIsEditingCallbackPhone(false);
 
       const itemTypeLabel = selectedItem?.type === 'service' ? 'Service' : 'Brand';
       const thankYouMsg = {
         id: `callback-${Date.now()}`,
         sender_type: 'bot',
-        content: `🎉 **Thank you! Our team will contact you shortly.**\n\n- **Selected Category:** ${selectedCategory?.name}\n- **Selected ${itemTypeLabel}:** ${selectedItem?.name}\n- **Mobile Number:** +91 ${cleaned}\n- **Status:** Callback Request Received (Pending)`,
+        content: `🎉 **Thank you! Our team will contact you shortly.**\n\n- **Selected Category:** ${selectedCategory?.name}\n- **Selected ${itemTypeLabel}:** ${selectedItem?.name}\n- **Mobile Number:** ${phoneToUse}\n- **Status:** Callback Request Received (Pending)`,
         createdAt: new Date()
       };
       setMessages(prev => [...prev, thankYouMsg]);
@@ -596,11 +645,20 @@ export default function WidgetPage() {
           })
         });
 
+        let savedVisitorId = null;
         if (!apiRes.ok) {
           const errData = await apiRes.json().catch(() => ({}));
           setLeadErrors({ mobile: errData.error || 'Failed to save details. Please try again.' });
           setIsSubmittingLead(false);
           return;
+        } else {
+          try {
+            const vData = await apiRes.json();
+            if (vData.visitor?.id) {
+              savedVisitorId = vData.visitor.id;
+              localStorage.setItem('chatdesk_visitor_id', String(savedVisitorId));
+            }
+          } catch (_) {}
         }
       } catch (apiErr) {
         console.error('Failed to sync visitor session with server:', apiErr);
@@ -613,7 +671,7 @@ export default function WidgetPage() {
       localStorage.setItem('chatdesk_visitor_name', trimmedName);
       localStorage.setItem('chatdesk_visitor_email', trimmedEmail);
       localStorage.setItem('chatdesk_visitor_mobile', trimmedMobile);
-      const updatedVisitor = { name: trimmedName, email: trimmedEmail, phone: trimmedMobile };
+      const updatedVisitor = { id: savedVisitorId, name: trimmedName, email: trimmedEmail, phone: trimmedMobile };
       setVisitorInfo(updatedVisitor);
 
       // Close the form
@@ -961,7 +1019,15 @@ export default function WidgetPage() {
                               <button
                                 type="button"
                                 onClick={() => {
+                                  const existingPhone = getAuthoritativeVisitorPhone();
                                   setCallbackError('');
+                                  if (existingPhone && isValidPhone(existingPhone)) {
+                                    setCallbackMobile(existingPhone);
+                                    setIsEditingCallbackPhone(false);
+                                  } else {
+                                    setCallbackMobile(existingPhone || '');
+                                    setIsEditingCallbackPhone(true);
+                                  }
                                   setShowCallbackModal(true);
                                 }}
                                 className="py-2.5 px-3 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center space-x-1.5 transition-all shadow-xs active:scale-98 cursor-pointer"
@@ -1241,7 +1307,7 @@ export default function WidgetPage() {
                           <Phone size={16} />
                         </div>
                         <div>
-                          <h4 className="text-sm font-bold text-gray-900 dark:text-white">Request Call Back</h4>
+                          <h4 className="text-sm font-bold text-gray-900 dark:text-white">Request a Callback</h4>
                           <p className="text-[11px] text-gray-500 dark:text-gray-400">DCS Techno Services Pvt. Ltd.</p>
                         </div>
                       </div>
@@ -1250,8 +1316,10 @@ export default function WidgetPage() {
                         onClick={() => {
                           setShowCallbackModal(false);
                           setCallbackError('');
+                          setIsEditingCallbackPhone(false);
                         }}
-                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1"
+                        disabled={isSubmittingCallback}
+                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1 cursor-pointer"
                       >
                         <X size={16} />
                       </button>
@@ -1268,68 +1336,133 @@ export default function WidgetPage() {
                       </div>
                     </div>
 
-                    <form onSubmit={handleCallbackSubmit} className="space-y-3">
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                          Mobile Number (India)
-                        </label>
-                        <div className="flex items-center">
-                          <span className="inline-flex items-center px-3 py-2.5 rounded-l-xl border border-r-0 border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 text-xs font-semibold">
-                            +91
-                          </span>
-                          <input
-                            type="tel"
-                            placeholder="10-digit mobile number"
-                            maxLength={10}
-                            value={callbackMobile}
-                            disabled={isSubmittingCallback}
-                            onChange={(e) => {
-                              const val = e.target.value.replace(/\D/g, '').slice(0, 10);
-                              setCallbackMobile(val);
-                              if (callbackError) setCallbackError('');
-                            }}
-                            className="flex-1 text-sm px-3 py-2.5 rounded-r-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
-                            autoFocus
-                          />
+                    {!isEditingCallbackPhone ? (
+                      /* CONFIRMATION VIEW - Reusing registered phone */
+                      <div className="space-y-3.5">
+                        <div className="p-3.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-100 dark:border-emerald-800/60 space-y-2">
+                          <p className="text-xs text-gray-600 dark:text-gray-300">
+                            We will call you on your registered mobile number:
+                          </p>
+                          <div className="flex items-center justify-between pt-0.5">
+                            <span className="text-sm font-bold text-emerald-800 dark:text-emerald-300 font-mono tracking-wide">
+                              {callbackMobile || getAuthoritativeVisitorPhone()}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCallbackError('');
+                                setIsEditingCallbackPhone(true);
+                              }}
+                              disabled={isSubmittingCallback}
+                              className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                            >
+                              Change number
+                            </button>
+                          </div>
                         </div>
+
                         {callbackError && (
-                          <p className="text-[11px] text-red-500 mt-1 flex items-center">
+                          <p className="text-[11px] text-red-500 flex items-center">
                             <AlertCircle size={12} className="mr-1 shrink-0" /> {callbackError}
                           </p>
                         )}
-                        <p className="text-[10px] text-gray-400 mt-1">
-                          Enter 10 digits starting with 6, 7, 8, or 9
-                        </p>
-                      </div>
 
-                      <div className="flex items-center space-x-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowCallbackModal(false);
-                            setCallbackError('');
-                          }}
-                          disabled={isSubmittingCallback}
-                          className="flex-1 py-2.5 px-3 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={isSubmittingCallback || !callbackMobile}
-                          className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-md active:scale-98 disabled:opacity-50 flex items-center justify-center space-x-1"
-                        >
-                          {isSubmittingCallback ? (
-                            <>
-                              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-1"></div>
-                              <span>Submitting...</span>
-                            </>
-                          ) : (
-                            <span>Submit Request</span>
-                          )}
-                        </button>
+                        <div className="flex items-center space-x-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowCallbackModal(false);
+                              setCallbackError('');
+                              setIsEditingCallbackPhone(false);
+                            }}
+                            disabled={isSubmittingCallback}
+                            className="flex-1 py-2.5 px-3 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCallbackSubmit}
+                            disabled={isSubmittingCallback}
+                            className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-md active:scale-98 disabled:opacity-50 flex items-center justify-center space-x-1 cursor-pointer"
+                          >
+                            {isSubmittingCallback ? (
+                              <>
+                                <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-1"></div>
+                                <span>Submitting...</span>
+                              </>
+                            ) : (
+                              <span>Confirm Callback Request</span>
+                            )}
+                          </button>
+                        </div>
                       </div>
-                    </form>
+                    ) : (
+                      /* INPUT VIEW - Enter or update mobile number */
+                      <form onSubmit={handleCallbackSubmit} className="space-y-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Mobile Number (with country code)
+                          </label>
+                          <input
+                            type="tel"
+                            placeholder="+91 98765 43210"
+                            value={callbackMobile}
+                            disabled={isSubmittingCallback}
+                            onChange={(e) => {
+                              setCallbackMobile(e.target.value);
+                              if (callbackError) setCallbackError('');
+                            }}
+                            className="w-full text-sm px-3 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
+                            autoFocus
+                          />
+                          {callbackError && (
+                            <p className="text-[11px] text-red-500 mt-1 flex items-center">
+                              <AlertCircle size={12} className="mr-1 shrink-0" /> {callbackError}
+                            </p>
+                          )}
+                          <p className="text-[10px] text-gray-400 mt-1">
+                            Enter your mobile number with country code (e.g. +91 98765 43210)
+                          </p>
+                        </div>
+
+                        <div className="flex items-center space-x-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const existingPhone = getAuthoritativeVisitorPhone();
+                              if (existingPhone && isValidPhone(existingPhone)) {
+                                setCallbackMobile(existingPhone);
+                                setIsEditingCallbackPhone(false);
+                                setCallbackError('');
+                              } else {
+                                setShowCallbackModal(false);
+                                setCallbackError('');
+                                setIsEditingCallbackPhone(false);
+                              }
+                            }}
+                            disabled={isSubmittingCallback}
+                            className="flex-1 py-2.5 px-3 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={isSubmittingCallback || !callbackMobile.trim()}
+                            className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-md active:scale-98 disabled:opacity-50 flex items-center justify-center space-x-1 cursor-pointer"
+                          >
+                            {isSubmittingCallback ? (
+                              <>
+                                <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-1"></div>
+                                <span>Submitting...</span>
+                              </>
+                            ) : (
+                              <span>Confirm Callback Request</span>
+                            )}
+                          </button>
+                        </div>
+                      </form>
+                    )}
                   </div>
                 </div>
               )}
