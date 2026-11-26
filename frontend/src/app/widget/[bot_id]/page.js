@@ -47,7 +47,7 @@ export default function WidgetPage() {
   const [searchTerm, setSearchTerm] = useState('');
 
   // Lead capture state
-  const [visitorInfo, setVisitorInfo] = useState({ name: '', email: '', phone: '' });
+  const [visitorInfo, setVisitorInfo] = useState({ id: null, name: '', email: '', phone: '' });
   const [showLeadForm, setShowLeadForm] = useState(false);
   const [pendingMessage, setPendingMessage] = useState('');
   const [pendingCategory, setPendingCategory] = useState(null);
@@ -129,11 +129,17 @@ export default function WidgetPage() {
     }
     setGuestId(gid);
 
+    const storedId = localStorage.getItem('chatdesk_visitor_id');
     const storedName = localStorage.getItem('chatdesk_visitor_name') || '';
     const storedEmail = localStorage.getItem('chatdesk_visitor_email') || '';
     const storedMobile = localStorage.getItem('chatdesk_visitor_mobile') || '';
     if (storedName && storedEmail) {
-      setVisitorInfo({ name: storedName, email: storedEmail, phone: storedMobile });
+      setVisitorInfo({
+        id: storedId ? parseInt(storedId, 10) : null,
+        name: storedName,
+        email: storedEmail,
+        phone: storedMobile
+      });
       setLeadName(storedName);
       setLeadEmail(storedEmail);
       setLeadMobile(storedMobile);
@@ -197,14 +203,17 @@ export default function WidgetPage() {
         const currentStoredMobile = localStorage.getItem('chatdesk_visitor_mobile');
         if (!currentStoredName || !currentStoredEmail || !currentStoredMobile) {
           const convWithVisitor = data.find(c => c.Visitor?.name && c.Visitor.name !== 'Guest' && c.Visitor?.email);
-          if (convWithVisitor) {
+          if (convWithVisitor && convWithVisitor.Visitor) {
+            const vId = convWithVisitor.Visitor.id;
             const vName = convWithVisitor.Visitor.name;
             const vEmail = convWithVisitor.Visitor.email;
             const vMobile = convWithVisitor.Visitor.phone || convWithVisitor.Visitor.mobile || '';
+            if (vId) localStorage.setItem('chatdesk_visitor_id', String(vId));
             localStorage.setItem('chatdesk_visitor_name', vName);
             localStorage.setItem('chatdesk_visitor_email', vEmail);
             if (vMobile) localStorage.setItem('chatdesk_visitor_mobile', vMobile);
             setVisitorInfo({
+              id: vId || null,
               name: vName,
               email: vEmail,
               phone: vMobile
@@ -233,20 +242,49 @@ export default function WidgetPage() {
     }
   }, [isOpen, isMaximized]);
 
+  const conversationRef = useRef(conversation);
+
+  useEffect(() => {
+    conversationRef.current = conversation;
+    if (socket && socket.connected && conversation?.id) {
+      socket.emit('join_conversation', {
+        conversationId: conversation.id,
+        botId: bot_id
+      });
+    }
+  }, [conversation?.id, socket, bot_id]);
+
   // Handle Socket for Real-time
   useEffect(() => {
     if (!isOpen) return;
 
-    const newSocket = io(API_BASE);
+    // Use polling transport for reliable cPanel/Passenger hosting compatibility
+    // Avoids repeated unsupported WebSocket upgrade warnings on Apache/Passenger
+    const newSocket = io(API_BASE, {
+      transports: ['polling'],
+      upgrade: false,
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000
+    });
     setSocket(newSocket);
 
     newSocket.on('connect', () => {
       console.log('Socket connected:', newSocket.id);
+      if (conversationRef.current?.id) {
+        newSocket.emit('join_conversation', {
+          conversationId: conversationRef.current.id,
+          botId: bot_id
+        });
+      }
     });
 
     newSocket.on('new_message', (msg) => {
-      if (conversation && msg.conversation_id === conversation.id) {
-        setMessages(prev => [...prev, msg]);
+      if (conversationRef.current && msg.conversation_id === conversationRef.current.id) {
+        setMessages(prev => {
+          if (prev.some(m => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
       }
     });
 
@@ -258,7 +296,7 @@ export default function WidgetPage() {
       newSocket.close();
       setSocket(null);
     };
-  }, [isOpen, conversation]);
+  }, [isOpen, bot_id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -510,6 +548,7 @@ export default function WidgetPage() {
     setIsTyping(true);
 
     const activeVisitor = currentVisitor || visitorInfo;
+    const vId = activeVisitor?.id || (typeof window !== 'undefined' && localStorage.getItem('chatdesk_visitor_id') ? parseInt(localStorage.getItem('chatdesk_visitor_id'), 10) : undefined);
     const vName = activeVisitor.name || localStorage.getItem('chatdesk_visitor_name') || '';
     const vEmail = activeVisitor.email || localStorage.getItem('chatdesk_visitor_email') || '';
     const vMobile = activeVisitor.phone || activeVisitor.mobile || localStorage.getItem('chatdesk_visitor_mobile') || '';
@@ -522,6 +561,7 @@ export default function WidgetPage() {
           bot_id,
           conversation_id: conversation?.id,
           user_id: guestId,
+          visitor_id: vId,
           content: contentToSend,
           visitor_name: vName,
           visitor_email: vEmail,
@@ -532,6 +572,10 @@ export default function WidgetPage() {
 
       if (res.ok) {
         const data = await res.json();
+        if (data.visitor_id) {
+          localStorage.setItem('chatdesk_visitor_id', String(data.visitor_id));
+          setVisitorInfo(prev => ({ ...prev, id: data.visitor_id }));
+        }
         // Update conversation if it's new
         if (!conversation) {
           setConversation({ id: data.conversation_id, title: data.title });
@@ -630,6 +674,8 @@ export default function WidgetPage() {
     setLeadErrors({});
     setIsSubmittingLead(true);
 
+    let resolvedVisitorId = visitorInfo?.id || (typeof window !== 'undefined' && localStorage.getItem('chatdesk_visitor_id') ? parseInt(localStorage.getItem('chatdesk_visitor_id'), 10) : null);
+
     try {
       // Persist to existing backend visitor session API
       try {
@@ -637,6 +683,7 @@ export default function WidgetPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            visitor_id: resolvedVisitorId || undefined,
             conversation_id: conversation?.id || null,
             name: trimmedName,
             email: trimmedEmail,
@@ -645,20 +692,17 @@ export default function WidgetPage() {
           })
         });
 
-        let savedVisitorId = null;
         if (!apiRes.ok) {
           const errData = await apiRes.json().catch(() => ({}));
           setLeadErrors({ mobile: errData.error || 'Failed to save details. Please try again.' });
           setIsSubmittingLead(false);
           return;
-        } else {
-          try {
-            const vData = await apiRes.json();
-            if (vData.visitor?.id) {
-              savedVisitorId = vData.visitor.id;
-              localStorage.setItem('chatdesk_visitor_id', String(savedVisitorId));
-            }
-          } catch (_) {}
+        }
+
+        const vData = await apiRes.json().catch(() => null);
+        if (vData?.visitor?.id) {
+          resolvedVisitorId = vData.visitor.id;
+          localStorage.setItem('chatdesk_visitor_id', String(resolvedVisitorId));
         }
       } catch (apiErr) {
         console.error('Failed to sync visitor session with server:', apiErr);
@@ -671,7 +715,12 @@ export default function WidgetPage() {
       localStorage.setItem('chatdesk_visitor_name', trimmedName);
       localStorage.setItem('chatdesk_visitor_email', trimmedEmail);
       localStorage.setItem('chatdesk_visitor_mobile', trimmedMobile);
-      const updatedVisitor = { id: savedVisitorId, name: trimmedName, email: trimmedEmail, phone: trimmedMobile };
+      const updatedVisitor = {
+        id: resolvedVisitorId,
+        name: trimmedName,
+        email: trimmedEmail,
+        phone: trimmedMobile
+      };
       setVisitorInfo(updatedVisitor);
 
       // Close the form

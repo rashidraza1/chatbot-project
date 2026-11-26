@@ -6,8 +6,14 @@ module.exports = (io, socket) => {
   console.log('New client connected:', socket.id);
 
   // Visitor joins a room based on conversation ID
-  socket.on('join_conversation', async ({ conversationId, botId, visitorData }) => {
+  socket.on('join_conversation', async (payload) => {
     try {
+      const conversationId = typeof payload === 'object' && payload !== null
+        ? (payload.conversationId || payload.conversation_id || payload.id)
+        : payload;
+      const botId = typeof payload === 'object' && payload !== null ? payload.botId : null;
+      const visitorData = typeof payload === 'object' && payload !== null ? payload.visitorData : null;
+
       let conversation;
 
       if (conversationId) {
@@ -31,13 +37,34 @@ module.exports = (io, socket) => {
         return;
       }
 
-      // If no conversation exists, create a new visitor and conversation
-      const visitor = await Visitor.create({
-        name: visitorData?.name || 'Anonymous',
-        email: visitorData?.email || null,
-        phone: visitorData?.phone || visitorData?.mobile || null,
-        last_page_url: visitorData?.url || null
-      });
+      // If no conversation exists, find or create visitor
+      let visitor = null;
+      if (visitorData?.id) {
+        visitor = await Visitor.findByPk(visitorData.id);
+      }
+      if (!visitor && visitorData?.email) {
+        visitor = await Visitor.findOne({ where: { email: visitorData.email }, order: [['id', 'DESC']] });
+      }
+      if (!visitor && (visitorData?.phone || visitorData?.mobile)) {
+        visitor = await Visitor.findOne({ where: { phone: visitorData.phone || visitorData.mobile }, order: [['id', 'DESC']] });
+      }
+
+      if (!visitor) {
+        visitor = await Visitor.create({
+          name: visitorData?.name || 'Anonymous',
+          email: visitorData?.email || null,
+          phone: visitorData?.phone || visitorData?.mobile || null,
+          last_page_url: visitorData?.url || null,
+          last_seen: new Date()
+        });
+      } else {
+        await visitor.update({
+          ...(visitorData?.name ? { name: visitorData.name } : {}),
+          ...(visitorData?.email ? { email: visitorData.email } : {}),
+          ...(visitorData?.phone || visitorData?.mobile ? { phone: visitorData.phone || visitorData.mobile } : {}),
+          last_seen: new Date()
+        });
+      }
 
       conversation = await Conversation.create({
         bot_id: botId,

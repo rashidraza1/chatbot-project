@@ -4,7 +4,7 @@ const { searchRelevantChunks } = require('../services/pdfService');
 
 exports.processChat = async (req, res) => {
   try {
-    const { bot_id, conversation_id, user_id, content, visitor_name, visitor_email, visitor_phone, visitor_mobile, name, email, phone, mobile } = req.body;
+    const { bot_id, conversation_id, user_id, visitor_id, content, visitor_name, visitor_email, visitor_phone, visitor_mobile, name, email, phone, mobile } = req.body;
     const vName = (visitor_name || name || '').trim();
     const vEmail = (visitor_email || email || '').trim();
     const vPhone = (visitor_phone || visitor_mobile || phone || mobile || '').trim();
@@ -15,14 +15,34 @@ exports.processChat = async (req, res) => {
     }
 
     if (!conversation) {
-      // Create new conversation with visitor information
-      const visitor = await Visitor.create({
-        name: vName || 'Guest',
-        email: vEmail || null,
-        phone: vPhone || null,
-        last_page_url: req.headers.referer || null,
-        last_seen: new Date()
-      });
+      // Find existing visitor or create a new one to prevent duplicates
+      let visitor = null;
+      if (visitor_id) {
+        visitor = await Visitor.findByPk(visitor_id);
+      }
+      if (!visitor && vEmail) {
+        visitor = await Visitor.findOne({ where: { email: vEmail }, order: [['id', 'DESC']] });
+      }
+      if (!visitor && vPhone) {
+        visitor = await Visitor.findOne({ where: { phone: vPhone }, order: [['id', 'DESC']] });
+      }
+
+      if (visitor) {
+        await visitor.update({
+          ...(vName ? { name: vName } : {}),
+          ...(vEmail ? { email: vEmail } : {}),
+          ...(vPhone ? { phone: vPhone } : {}),
+          last_seen: new Date()
+        });
+      } else {
+        visitor = await Visitor.create({
+          name: vName || 'Guest',
+          email: vEmail || null,
+          phone: vPhone || null,
+          last_page_url: req.headers.referer || null,
+          last_seen: new Date()
+        });
+      }
 
       // Generate title
       const title = await generateChatTitle(bot_id, content);
@@ -113,6 +133,7 @@ exports.processChat = async (req, res) => {
       return res.status(200).json({
         conversation_id: conversation.id,
         title: conversation.title,
+        visitor_id: conversation.visitor_id,
         userMessage,
         botMessage
       });
@@ -120,6 +141,7 @@ exports.processChat = async (req, res) => {
       return res.status(200).json({
         conversation_id: conversation.id,
         title: conversation.title,
+        visitor_id: conversation.visitor_id,
         userMessage,
         info: 'Conversation requires agent handover or is closed'
       });
@@ -132,11 +154,12 @@ exports.processChat = async (req, res) => {
 
 exports.updateVisitorSession = async (req, res) => {
   try {
-    const { conversation_id, name, email, phone, mobile } = req.body;
+    const { conversation_id, visitor_id, name, email, phone, mobile } = req.body;
     const vName = (name || '').trim();
     const vEmail = (email || '').trim();
     const vPhone = (phone || mobile || '').trim();
 
+    // 1. If conversation_id is provided and has a visitor_id, update that visitor
     if (conversation_id) {
       const conv = await Conversation.findByPk(conversation_id);
       if (conv && conv.visitor_id) {
@@ -154,6 +177,46 @@ exports.updateVisitorSession = async (req, res) => {
       }
     }
 
+    // 2. If visitor_id is provided directly, find and update that visitor
+    if (visitor_id) {
+      const existingById = await Visitor.findByPk(visitor_id);
+      if (existingById) {
+        await existingById.update({
+          ...(vName ? { name: vName } : {}),
+          ...(vEmail ? { email: vEmail } : {}),
+          ...(vPhone ? { phone: vPhone } : {}),
+          last_seen: new Date()
+        });
+        return res.json({ success: true, visitor: existingById });
+      }
+    }
+
+    // 3. Prevent duplicate visitor creation: check if visitor with this email or phone already exists
+    let existingVisitor = null;
+    if (vEmail) {
+      existingVisitor = await Visitor.findOne({
+        where: { email: vEmail },
+        order: [['id', 'DESC']]
+      });
+    }
+    if (!existingVisitor && vPhone) {
+      existingVisitor = await Visitor.findOne({
+        where: { phone: vPhone },
+        order: [['id', 'DESC']]
+      });
+    }
+
+    if (existingVisitor) {
+      await existingVisitor.update({
+        ...(vName ? { name: vName } : {}),
+        ...(vEmail ? { email: vEmail } : {}),
+        ...(vPhone ? { phone: vPhone } : {}),
+        last_seen: new Date()
+      });
+      return res.json({ success: true, visitor: existingVisitor });
+    }
+
+    // 4. Otherwise, create new visitor record
     const visitor = await Visitor.create({
       name: vName || 'Guest',
       email: vEmail || null,
